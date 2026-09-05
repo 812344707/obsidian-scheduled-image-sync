@@ -1,0 +1,15 @@
+# Only project source and publishable documentation belong in this repository.
+/*
+!/.gitignore
+!/README.md
+!/LICENSE
+!/docs/
+!/s3-image-sync/
+
+# Local configuration, credentials, dependencies and editor files.
+**/node_modules/
+**/data.json
+**/.env
+**/.env.*
+**/.DS_Store
+**/*.log
