@@ -5,6 +5,7 @@ import { FileCategory, DeletePolicy, S3Provider, S3Config } from "./types";
 import { debounce } from "./utils";
 import { testS3Connection } from "./s3-client";
 import { normalizeScanInterval } from "./settings";
+import { resolveStorageConfig } from "./storage-config";
 
 const CATEGORY_ICONS: Record<string, string> = {
   image: "\ud83d\udcf7",
@@ -45,14 +46,7 @@ export class S3ImageSyncSettingTab extends PluginSettingTab {
   }
 
   private isS3Configured(): boolean {
-    const s3 = this.plugin.settings.s3;
-    return !!(
-      s3.endpoint.trim() &&
-      s3.bucketName.trim() &&
-      s3.accessKeyId.trim() &&
-      s3.secretAccessKey.trim() &&
-      s3.customDomainName.trim()
-    );
+    try { this.plugin.ensureS3Settings(); return true; } catch { return false; }
   }
 
   private renderSetupStatus(containerEl: HTMLElement): void {
@@ -88,13 +82,16 @@ export class S3ImageSyncSettingTab extends PluginSettingTab {
         dropdown
           .addOption("r2", t("providerR2"))
           .addOption("s3", t("providerS3"))
+          .addOption("oss", t("providerOSS"))
           .addOption("minio", t("providerMinio"))
           .addOption("custom", t("providerCustom"))
           .setValue(this.plugin.settings.s3.provider)
           .onChange((value) => {
             const provider = value as S3Provider;
             this.plugin.settings.s3.provider = provider;
-            if (provider === "r2") {
+            if (provider === "oss") {
+              this.plugin.settings.s3.region = "cn-hangzhou";
+            } else if (provider === "r2") {
               this.plugin.settings.s3.region = "auto";
             } else if (!this.plugin.settings.s3.region || this.plugin.settings.s3.region === "auto") {
               this.plugin.settings.s3.region = "us-east-1";
@@ -104,13 +101,17 @@ export class S3ImageSyncSettingTab extends PluginSettingTab {
           })
       );
 
+    const isOSS = this.plugin.settings.s3.provider === "oss";
+    if (isOSS) {
+      containerEl.createEl("p", { text: t("ossGuide"), cls: "attachment-imagebed-manager-guide" });
+    }
     if (this.plugin.settings.s3.provider !== "r2") {
       new Setting(containerEl)
         .setName(t("region"))
-        .setDesc(t("regionDesc"))
+        .setDesc(t(isOSS ? "ossRegionDesc" : "regionDesc"))
         .addText((text) =>
           text.setValue(this.plugin.settings.s3.region).onChange((value) => {
-            this.plugin.settings.s3.region = value.trim() || "us-east-1";
+            this.plugin.settings.s3.region = value.trim();
             debouncedSave();
           })
         );
@@ -125,6 +126,10 @@ export class S3ImageSyncSettingTab extends PluginSettingTab {
     ];
 
     for (const [key, label, desc, isPassword] of s3Fields) {
+      if (isOSS && key === "endpoint") {
+        new Setting(containerEl).setName(t("endpoint")).setDesc(t("ossEndpointAuto"));
+        continue;
+      }
       new Setting(containerEl)
         .setName(label)
         .setDesc(desc)
@@ -166,7 +171,7 @@ export class S3ImageSyncSettingTab extends PluginSettingTab {
           button.setButtonText(t("testing"));
           button.setDisabled(true);
           try {
-            await testS3Connection(this.plugin.settings.s3);
+            await testS3Connection(resolveStorageConfig(this.plugin.settings.s3));
             new Notice(t("testConnectionSuccess"));
           } catch (error: unknown) {
             const errMsg = error instanceof Error ? error.message : String(error);

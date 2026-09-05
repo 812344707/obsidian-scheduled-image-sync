@@ -76,7 +76,12 @@ async function harness(overrides = {}, requestHandler) {
     Plugin, TFile, Notice, MarkdownView: class {}, Modal: class {}, PluginSettingTab: class {}, Setting: class {},
     Platform: { isMobile: false }, getLanguage: () => 'zh',
     requestUrl: async params => {
-      assert.equal(new URL(params.url).hostname, '127.0.0.1', 'Tests must never contact an external host');
+      const host = new URL(params.url).hostname;
+      if (host === 'codex-oss-fixture.s3.oss-cn-hangzhou.aliyuncs.com') {
+        // OSS branch has no transport or callback: capture only, never access the cloud.
+        requests.push(params); return {status: 200, text: ''};
+      }
+      assert.equal(host, '127.0.0.1', 'Tests must never contact an external host');
       requests.push(params);
       return requestHandler ? requestHandler(params) : { status: 200, text: '' };
     },
@@ -481,4 +486,49 @@ test('metadata resolution protects references whose written target omits the ext
   const h = await harness(); h.add('assets/a.png'); h.add('note.md', '[picture](assets/a)');
   h.app.metadataCache.resolvedLinks = {'note.md': {'assets/a.png': 1}};
   assert.deepEqual(paths(await h.plugin.cleanup.scan()), []);
+});
+
+
+test('OSS scheduled upload, encoded note links, reload and selected cloud cleanup work together', async () => {
+  const h = await harness({s3: {...baseSettings.s3, provider: 'oss', region: 'oss-cn-hangzhou', endpoint: '',
+    bucketName: 'codex-oss-fixture', customDomainName: 'https://img.example.com/相册 1', pathTemplate: 'images/中文 空格/{hash}.{ext}'}});
+  const note = h.add('a.md', '![[assets/a.png]]'); h.add('assets/a.png');
+  h.plugin.ensureS3Settings();
+  await h.plugin.runAutoScan();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].method, 'PUT');
+  assert.ok(note.content.includes('/images/%E4%B8%AD%E6%96%87%20%E7%A9%BA%E6%A0%BC/'));
+  assert.equal(note.content.includes('%25E4'), false);
+  assert.ok(note.content.includes('/%E7%9B%B8%E5%86%8C%201/images/'));
+  await h.plugin.loadSettings();
+  const r = h.plugin.settings.uploadRecords[0];
+  assert.equal(r.addressingStyle, 'virtual');
+  assert.equal(r.endpoint, 'https://s3.oss-cn-hangzhou.aliyuncs.com');
+  assert.equal(r.region, 'cn-hangzhou');
+  assert.ok(h.files.has('assets/a.png'));
+  assert.match((await h.plugin.cleanup.scan()).items[0].remoteBlock, /仍被引用/);
+  note.content = ''; h.emit('modify');
+  h.plugin.settings.s3.provider = 'custom';
+  h.plugin.settings.s3.endpoint = r.endpoint;
+  h.plugin.settings.s3.region = r.region;
+  assert.match((await h.plugin.cleanup.scan()).items[0].remoteBlock, /配置/);
+  h.plugin.settings.s3.provider = 'oss';
+  const result = await h.plugin.cleanup.deleteSelected((await h.plugin.cleanup.scan()).items,'both');
+  assert.equal(result[0].status,'deleted');
+  assert.equal(h.requests[1].method,'DELETE');
+  assert.equal(h.requests[0].url,h.requests[1].url);
+  assert.deepEqual(h.deleted,['assets/a.png']);
+  await h.plugin.loadSettings();
+  assert.ok(h.plugin.settings.uploadRecords[0].deletedAt);
+});
+
+test('legacy path-style records remain deletable but cannot become OSS objects by changing provider', async () => {
+  const h = await harness(); h.add('assets/a.png'); record(h,'assets/a.png');
+  delete h.plugin.settings.uploadRecords[0].addressingStyle;
+  assert.equal((await h.plugin.cleanup.scan()).items[0].remoteBlock,null);
+  h.plugin.settings.s3 = {...h.plugin.settings.s3, provider:'oss', region:'cn-hangzhou', bucketName:'codex-oss-fixture'};
+  const scan = await h.plugin.cleanup.scan();
+  assert.ok(scan.items[0].remoteBlock);
+  await h.plugin.cleanup.deleteSelected(scan.items,'both');
+  assert.equal(h.requests.length,0);
 });

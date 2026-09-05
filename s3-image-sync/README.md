@@ -2,7 +2,7 @@
 
 复用开源插件 **S3 Image Sync 1.0.10** 的本地修正版。在 Obsidian 运行期间，按自定间隔扫描笔记中的本地图片，上传到自选的 S3 兼容服务，原位替换图片链接。
 
-版本：`1.0.10-local.3`；插件 ID：`s3-image-sync-local`。这是本地修改版，不是上游官方发布版本。
+版本：`1.0.10-local.4`；插件 ID：`s3-image-sync-local`。这是本地修改版，不是上游官方发布版本。
 
 ## 安装
 
@@ -16,7 +16,7 @@
 
 ## 自定义图床
 
-支持 Cloudflare R2、AWS S3、MinIO，以及其他 **S3 兼容服务**。服务商选「自定义 S3」后，可自行填写端点 URL、区域、存储桶、Access Key ID、Secret Access Key、图片公开访问 URL 和上传路径模板。
+支持 阿里云 OSS、Cloudflare R2、AWS S3、MinIO，以及其他 **S3 兼容服务**。OSS 请选「阿里云 OSS」，按地域自动生成端点；其他兼容服务选「自定义 S3」后，可自行填写端点 URL、区域、存储桶、Access Key ID、Secret Access Key、图片公开访问 URL 和上传路径模板。
 
 普通图床的「上传地址 + Token」接口与 S3 不同，本版尚未支持任意 HTTP 图床、PicGo 或 PicList。真实图床尚未配置和验证；本机测试服务成功不代表云端账号可用。凭据直接填在 Obsidian 设置中，会保存在本地插件目录的 `data.json`；安装包不含凭据。
 
@@ -84,3 +84,11 @@ npm test
 - 保留 MIT 许可证 `LICENSE` 和原说明 `UPSTREAM-README.md`。
 
 本地版本没有自动更新来源；升级时需合并上游改动并重新验证。
+
+## 阿里云 OSS（1.0.10-local.4 新增）
+
+服务商选择「阿里云 OSS」，填写地域（如 `cn-hangzhou`）、Bucket、RAM AccessKey ID/Secret 和公开访问 URL。端点按地域自动生成，无需填写，也无需 PicGo。详细步骤见 [阿里云配置教程](../docs/aliyun-oss-setup.md)；ZIP 内附 `aliyun-oss-setup.md`。
+
+本版使用 OSS 外网 S3 兼容接口和虚拟托管寻址；不会修改 Bucket/Object 权限。公开图片链接需要匿名读取权限。连接测试只验证列举权限；上传、公开显示和删除要分别用样例验证。真实 OSS 账号、手机端尚未联调。
+
+同时修复中文及特殊字符路径的重复编码、权限错误反复重试、连接测试误把重定向视为成功的问题。新增寻址方式记录，旧记录按原有路径方式保留，切换服务商不会把旧记录误当作 OSS 对象删除。

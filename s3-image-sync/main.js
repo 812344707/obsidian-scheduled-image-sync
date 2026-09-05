@@ -149,7 +149,7 @@ function mergeSettings(defaults, loaded) {
     ...defaults.s3,
     ...s3Data,
     provider: s3Data.provider || (data.r2 ? "r2" : "r2"),
-    region: s3Data.region || (s3Data.provider === "r2" || data.r2 ? "auto" : "us-east-1")
+    region: s3Data.region || (s3Data.provider === "oss" ? "cn-hangzhou" : s3Data.provider === "r2" || data.r2 ? "auto" : "us-east-1")
   };
   return {
     ...defaults,
@@ -299,6 +299,41 @@ async function getSignatureKey(secret, dateStamp, region, service) {
   return hmacSha256(kService, "aws4_request");
 }
 
+// src/storage-config.ts
+function resolveStorageConfig(config) {
+  if (config.provider !== "oss")
+    return { ...config };
+  const region = config.region.trim().replace(/^oss-/, "");
+  if (!/^[a-z]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(region)) {
+    throw new Error("OSS Region \u65E0\u6548 / Invalid OSS region (e.g. cn-hangzhou)");
+  }
+  if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(config.bucketName)) {
+    throw new Error("OSS Bucket \u540D\u79F0\u65E0\u6548 / Invalid OSS bucket name");
+  }
+  return { ...config, region, endpoint: `https://s3.oss-${region}.aliyuncs.com` };
+}
+function storageAddressing(config) {
+  return config.provider === "oss" ? "virtual" : "path";
+}
+function encodeObjectKey(key) {
+  return key.split("/").map((part) => encodeURIComponent(part).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)).join("/");
+}
+function storageRequestUrl(config, key = "") {
+  const resolved = resolveStorageConfig(config);
+  if (key.split("/").some((part) => part === "." || part === "..")) {
+    throw new Error("\u5BF9\u8C61\u8DEF\u5F84\u4E0D\u80FD\u5305\u542B . \u6216 .. / Object key cannot contain dot segments");
+  }
+  const endpoint2 = new URL(resolved.endpoint);
+  if (!["https:", "http:"].includes(endpoint2.protocol) || endpoint2.username || endpoint2.password || endpoint2.search || endpoint2.hash) {
+    throw new Error("\u65E0\u6548\u7684\u5B58\u50A8\u7AEF\u70B9 / Invalid storage endpoint");
+  }
+  if (storageAddressing(config) === "virtual") {
+    endpoint2.hostname = `${resolved.bucketName}.${endpoint2.hostname}`;
+    return `${endpoint2.origin}/${encodeObjectKey(key)}`;
+  }
+  return `${resolved.endpoint.replace(/\/+$/, "")}/${encodeURIComponent(resolved.bucketName)}/${encodeObjectKey(key)}`;
+}
+
 // src/utils.ts
 function basename2(path) {
   return String(path || "").split("/").pop() || path;
@@ -322,7 +357,11 @@ function buildPublicUrl(domain, key) {
   if (cleanDomain && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(cleanDomain)) {
     cleanDomain = `https://${cleanDomain}`;
   }
-  return `${cleanDomain}/${key.split("/").map(encodeURIComponent).join("/")}`;
+  const base = new URL(cleanDomain);
+  if (!["http:", "https:"].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
+    throw new Error("\u516C\u5F00\u8BBF\u95EE URL \u9700\u4E3A\u65E0\u7B7E\u540D\u7684 HTTP(S) \u5730\u5740 / Public URL must be an unsigned HTTP(S) base URL");
+  }
+  return `${base.href.replace(/\/+$/, "")}/${encodeObjectKey(key)}`;
 }
 function escapeMarkdownLabel(label) {
   return String(label || "attachment").replace(/\]/g, "\\]");
@@ -398,10 +437,8 @@ function shouldRetry(status) {
   return status === 429 || status >= 500;
 }
 async function putS3Object(config, key, body, contentType, formatError, precomputedHash) {
-  const endpoint2 = String(config.endpoint || "").replace(/\/+$/, "");
-  const bucket = config.bucketName;
-  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-  const url = `${endpoint2}/${bucket}/${encodedKey}`;
+  config = resolveStorageConfig(config);
+  const url = storageRequestUrl(config, key);
   const parsed = new URL(url);
   const region = config.region || "auto";
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -444,39 +481,33 @@ async function putS3Object(config, key, body, contentType, formatError, precompu
       "x-amz-date": amzDate,
       Authorization: `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
     };
+    let response;
     try {
-      const response = await (0, import_obsidian.requestUrl)({
+      response = await (0, import_obsidian.requestUrl)({
         url,
         method: "PUT",
         headers,
         body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
         throw: false
       });
-      if (response.status >= 200 && response.status < 300)
-        return;
-      if (shouldRetry(response.status) && attempt < MAX_RETRIES) {
-        await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
-        continue;
-      }
-      throw new Error(formatError(response.status, response.text || ""));
     } catch (error) {
-      if (error instanceof Error && error.message) {
-        if (attempt >= MAX_RETRIES)
-          throw error;
-      }
-      if (attempt < MAX_RETRIES) {
-        await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
-        continue;
-      }
-      throw error;
+      if (attempt >= MAX_RETRIES)
+        throw error;
+      await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
+      continue;
     }
+    if (response.status >= 200 && response.status < 300)
+      return;
+    if (shouldRetry(response.status) && attempt < MAX_RETRIES) {
+      await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
+      continue;
+    }
+    throw new Error(formatError(response.status, response.text || ""));
   }
 }
 async function deleteS3Object(config, key) {
-  const endpoint2 = String(config.endpoint || "").replace(/\/+$/, "");
-  const bucket = config.bucketName;
-  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-  const url = `${endpoint2}/${bucket}/${encodedKey}`;
+  config = resolveStorageConfig(config);
+  const url = storageRequestUrl(config, key);
   const parsed = new URL(url);
   const region = config.region || "auto";
   const now = /* @__PURE__ */ new Date();
@@ -518,9 +549,8 @@ async function deleteS3Object(config, key) {
   throw new Error(`S3 DELETE failed (${response.status})`);
 }
 async function testS3Connection(config) {
-  const endpoint2 = String(config.endpoint || "").replace(/\/+$/, "");
-  const bucket = config.bucketName;
-  const url = `${endpoint2}/${bucket}/`;
+  config = resolveStorageConfig(config);
+  const url = storageRequestUrl(config);
   const parsed = new URL(url);
   const region = config.region || "auto";
   const now = /* @__PURE__ */ new Date();
@@ -557,7 +587,7 @@ async function testS3Connection(config) {
     Authorization: `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
   };
   const response = await (0, import_obsidian.requestUrl)({ url, method: "GET", headers, throw: false });
-  if (response.status >= 200 && response.status < 400)
+  if (response.status >= 200 && response.status < 300)
     return;
   throw new Error(`S3 connection test failed (${response.status}): ${response.text || "Unknown error"}`);
 }
@@ -665,6 +695,10 @@ var I18N = {
     providerS3: "AWS S3",
     providerMinio: "MinIO",
     providerCustom: "Custom S3",
+    providerOSS: "Alibaba Cloud OSS",
+    ossRegionDesc: "Your bucket region, e.g. cn-hangzhou (oss-cn-hangzhou also accepted).",
+    ossEndpointAuto: "Generated from Region: https://s3.oss-<region>.aliyuncs.com. Bucket is added to the hostname automatically.",
+    ossGuide: "Direct OSS upload; PicGo is not required. The plugin uses the public S3-compatible endpoint and never changes bucket permissions. Public image URLs require anonymous read access. Use a dedicated RAM key; credentials are stored in this vault's plugin data.json.",
     endpoint: "Endpoint URL",
     endpointDesc: "e.g. https://abc123.r2.cloudflarestorage.com",
     bucketName: "Bucket name",
@@ -677,9 +711,9 @@ var I18N = {
     objectPathTemplate: "Upload path template",
     pathTemplateDesc: "Dynamically customize the S3 upload path. Supported variables:\n\u2022 \\{ext}: File extension (e.g. png, jpg)\n\u2022 \\{hash}: 64-char full SHA-256 hash\n\u2022 \\{hash-short}: 32-char short hash\n\u2022 \\{hash2}: First 2 chars of hash (for partition)\n\u2022 \\{filename}: Original file name (excluding extension)\n\u2022 \\{yyyy}: Current year (4 digits)\n\u2022 \\{MM}: Current month (2 digits)\n\u2022 \\{dd}: Current day (2 digits)\nDefault: attachments/\\{ext}/\\{hash2}/\\{hash}.\\{ext}",
     testConnection: "Test connection",
-    testConnectionDesc: "Click to verify your credentials are correct.",
+    testConnectionDesc: "Read-only bucket listing test. Upload, delete and public access require separate verification.",
     testing: "Testing...",
-    testConnectionSuccess: "Connection test passed!",
+    testConnectionSuccess: "Bucket listing test passed. Verify upload and display with a test image next.",
     testConnectionFailed: "Connection test failed: {error}",
     // Settings - General
     generalSettings: "Step 2: General settings",
@@ -834,6 +868,10 @@ var I18N = {
     providerS3: "AWS S3",
     providerMinio: "MinIO",
     providerCustom: "\u81EA\u5B9A\u4E49 S3",
+    providerOSS: "\u963F\u91CC\u4E91 OSS",
+    ossRegionDesc: "\u586B\u5199 Bucket \u6240\u5728\u5730\u57DF\uFF0C\u4F8B\u5982 cn-hangzhou\uFF1B\u4E5F\u63A5\u53D7 oss-cn-hangzhou\u3002",
+    ossEndpointAuto: "\u6309\u5730\u57DF\u81EA\u52A8\u751F\u6210 https://s3.oss-<\u5730\u57DF>.aliyuncs.com\uFF0C\u8BF7\u6C42\u65F6\u81EA\u52A8\u5C06 Bucket \u653E\u5230\u57DF\u540D\u4E2D\u3002\u65E0\u9700\u586B\u5199\u7AEF\u70B9\u3002",
+    ossGuide: "\u76F4\u63A5\u4E0A\u4F20 OSS\uFF0C\u65E0\u9700 PicGo\u3002\u4F7F\u7528\u5916\u7F51 S3 \u517C\u5BB9\u63A5\u53E3\uFF0C\u4E0D\u4F1A\u4FEE\u6539 Bucket \u6743\u9650\u3002\u516C\u5F00\u94FE\u63A5\u9700\u8981\u5141\u8BB8\u533F\u540D\u8BFB\u53D6\uFF1B\u8BF7\u4F7F\u7528\u4E13\u7528 RAM \u5BC6\u94A5\uFF0C\u51ED\u636E\u4FDD\u5B58\u5728\u5F53\u524D\u5E93\u7684\u63D2\u4EF6 data.json \u4E2D\u3002",
     endpoint: "\u7AEF\u70B9 URL",
     endpointDesc: "\u4F8B\u5982 https://abc123.r2.cloudflarestorage.com",
     bucketName: "\u5B58\u50A8\u6876\u540D\u79F0",
@@ -846,9 +884,9 @@ var I18N = {
     objectPathTemplate: "\u4E0A\u4F20\u8DEF\u5F84\u6A21\u677F",
     pathTemplateDesc: "\u81EA\u5B9A\u4E49 S3 \u4E0A\u4F20\u8DEF\u5F84\u3002\u652F\u6301\u4EE5\u4E0B\u53D8\u91CF\uFF1A\n\u2022 \\{ext}\uFF1A\u6587\u4EF6\u6269\u5C55\u540D/\u540E\u7F00 (\u5982 png\u3001jpg \u7B49)\n\u2022 \\{hash}\uFF1A64\u4F4D\u5B8C\u6574 SHA-256 \u6587\u4EF6\u54C8\u5E0C\u503C\n\u2022 \\{hash-short}\uFF1A32\u4F4D\u77ED SHA-256 \u6587\u4EF6\u54C8\u5E0C\u503C\n\u2022 \\{hash2}\uFF1ASHA-256 \u54C8\u5E0C\u503C\u7684\u524D2\u4F4D\u5B57\u7B26 (\u9002\u5408\u6D77\u91CF\u6587\u4EF6\u4E8C\u7EA7\u5206\u6D41)\n\u2022 \\{filename}\uFF1A\u539F\u59CB\u6587\u4EF6\u540D (\u4E0D\u542B\u6269\u5C55\u540D)\n\u2022 \\{yyyy}\uFF1A4\u4F4D\u5F53\u524D\u5E74\u4EFD (\u5982 2026)\n\u2022 \\{MM}\uFF1A2\u4F4D\u5F53\u524D\u6708\u4EFD (\u5982 06)\n\u2022 \\{dd}\uFF1A2\u4F4D\u5F53\u524D\u65E5\u671F (\u5982 17)\n\u9ED8\u8BA4\u503C\uFF1Aattachments/\\{ext}/\\{hash2}/\\{hash}.\\{ext}",
     testConnection: "\u6D4B\u8BD5\u8FDE\u63A5",
-    testConnectionDesc: "\u70B9\u51FB\u9A8C\u8BC1\u51ED\u636E\u662F\u5426\u6B63\u786E\u3002",
+    testConnectionDesc: "\u53EA\u8BFB\u68C0\u67E5\u5B58\u50A8\u6876\u5217\u4E3E\u6743\u9650\uFF08OSS \u9700 oss:ListObjects\uFF09\uFF1B\u901A\u8FC7\u4E0D\u4EE3\u8868\u4E0A\u4F20\u3001\u5220\u9664\u6216\u516C\u5F00\u8BFB\u53D6\u5DF2\u9A8C\u8BC1\u3002",
     testing: "\u6D4B\u8BD5\u4E2D...",
-    testConnectionSuccess: "\u8FDE\u63A5\u6D4B\u8BD5\u901A\u8FC7\uFF01",
+    testConnectionSuccess: "\u5B58\u50A8\u6876\u8FDE\u63A5\u4E0E\u5217\u4E3E\u6743\u9650\u6D4B\u8BD5\u901A\u8FC7\uFF1B\u8BF7\u518D\u7528\u6D4B\u8BD5\u56FE\u7247\u9A8C\u8BC1\u4E0A\u4F20\u548C\u663E\u793A\u3002",
     testConnectionFailed: "\u8FDE\u63A5\u6D4B\u8BD5\u5931\u8D25\uFF1A{error}",
     // Settings - General
     generalSettings: "\u7B2C\u4E8C\u6B65\uFF1A\u57FA\u672C\u8BBE\u7F6E",
@@ -1223,8 +1261,12 @@ var S3ImageSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
     this.renderLogSection(containerEl);
   }
   isS3Configured() {
-    const s3 = this.plugin.settings.s3;
-    return !!(s3.endpoint.trim() && s3.bucketName.trim() && s3.accessKeyId.trim() && s3.secretAccessKey.trim() && s3.customDomainName.trim());
+    try {
+      this.plugin.ensureS3Settings();
+      return true;
+    } catch {
+      return false;
+    }
   }
   renderSetupStatus(containerEl) {
     const t2 = (k, p) => this.plugin.t(k, p);
@@ -1248,10 +1290,12 @@ var S3ImageSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       cls: "attachment-imagebed-manager-guide"
     });
     new import_obsidian4.Setting(containerEl).setName(t2("provider")).setDesc(t2("providerDesc")).addDropdown(
-      (dropdown) => dropdown.addOption("r2", t2("providerR2")).addOption("s3", t2("providerS3")).addOption("minio", t2("providerMinio")).addOption("custom", t2("providerCustom")).setValue(this.plugin.settings.s3.provider).onChange((value) => {
+      (dropdown) => dropdown.addOption("r2", t2("providerR2")).addOption("s3", t2("providerS3")).addOption("oss", t2("providerOSS")).addOption("minio", t2("providerMinio")).addOption("custom", t2("providerCustom")).setValue(this.plugin.settings.s3.provider).onChange((value) => {
         const provider = value;
         this.plugin.settings.s3.provider = provider;
-        if (provider === "r2") {
+        if (provider === "oss") {
+          this.plugin.settings.s3.region = "cn-hangzhou";
+        } else if (provider === "r2") {
           this.plugin.settings.s3.region = "auto";
         } else if (!this.plugin.settings.s3.region || this.plugin.settings.s3.region === "auto") {
           this.plugin.settings.s3.region = "us-east-1";
@@ -1260,10 +1304,14 @@ var S3ImageSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         this.renderSettings();
       })
     );
+    const isOSS = this.plugin.settings.s3.provider === "oss";
+    if (isOSS) {
+      containerEl.createEl("p", { text: t2("ossGuide"), cls: "attachment-imagebed-manager-guide" });
+    }
     if (this.plugin.settings.s3.provider !== "r2") {
-      new import_obsidian4.Setting(containerEl).setName(t2("region")).setDesc(t2("regionDesc")).addText(
+      new import_obsidian4.Setting(containerEl).setName(t2("region")).setDesc(t2(isOSS ? "ossRegionDesc" : "regionDesc")).addText(
         (text) => text.setValue(this.plugin.settings.s3.region).onChange((value) => {
-          this.plugin.settings.s3.region = value.trim() || "us-east-1";
+          this.plugin.settings.s3.region = value.trim();
           debouncedSave();
         })
       );
@@ -1276,6 +1324,10 @@ var S3ImageSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
       ["customDomainName", t2("publicDomain"), t2("publicDomainDesc"), false]
     ];
     for (const [key, label, desc, isPassword] of s3Fields) {
+      if (isOSS && key === "endpoint") {
+        new import_obsidian4.Setting(containerEl).setName(t2("endpoint")).setDesc(t2("ossEndpointAuto"));
+        continue;
+      }
       new import_obsidian4.Setting(containerEl).setName(label).setDesc(desc).addText((text) => {
         if (isPassword)
           text.inputEl.type = "password";
@@ -1304,7 +1356,7 @@ var S3ImageSyncSettingTab = class extends import_obsidian4.PluginSettingTab {
         button.setButtonText(t2("testing"));
         button.setDisabled(true);
         try {
-          await testS3Connection(this.plugin.settings.s3);
+          await testS3Connection(resolveStorageConfig(this.plugin.settings.s3));
           new import_obsidian4.Notice(t2("testConnectionSuccess"));
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : String(error);
@@ -1586,7 +1638,7 @@ var import_obsidian5 = require("obsidian");
 var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "bmp", "tif", "tiff", "avif", "ico"]);
 var NOTE_EXTENSIONS = /* @__PURE__ */ new Set(["md", "canvas", "base", "html", "htm"]);
 var endpoint = (value) => value.replace(/\/+$/, "");
-var identity = (r) => JSON.stringify([endpoint(r.endpoint), r.bucketName, r.key]);
+var identity = (r) => JSON.stringify([r.addressingStyle || "path", endpoint(r.endpoint), r.bucketName, r.key]);
 var errorText = (e) => e instanceof Error ? e.message : String(e);
 function normalize(text) {
   for (let i = 0; i < 4; i++) {
@@ -1616,7 +1668,9 @@ var ImageCleanup = class {
     this.revision++;
   }
   recordUpload(sourcePath, sourceHash, key, publicUrl, config) {
+    config = resolveStorageConfig(config);
     const record = {
+      addressingStyle: storageAddressing(config),
       sourcePath,
       sourceHash,
       key,
@@ -1663,8 +1717,12 @@ ${view.editor.getValue()}`;
     return text.includes(normalize(record.publicUrl)) || text.includes(normalize(record.key));
   }
   sameStorage(record) {
-    const config = this.plugin.settings.s3;
-    return endpoint(config.endpoint) === endpoint(record.endpoint) && config.bucketName === record.bucketName && (config.region || "auto") === record.region;
+    try {
+      const config = resolveStorageConfig(this.plugin.settings.s3);
+      return storageAddressing(config) === (record.addressingStyle || "path") && endpoint(config.endpoint) === endpoint(record.endpoint) && config.bucketName === record.bucketName && (config.region || "auto") === record.region;
+    } catch {
+      return false;
+    }
   }
   async scan(hashPaths) {
     const { app } = this.plugin;
@@ -2421,7 +2479,7 @@ var S3ImageSyncPlugin = class extends import_obsidian7.Plugin {
     return { replaced, localFiles };
   }
   async uploadCandidate(candidate) {
-    const config = { ...this.settings.s3 };
+    const config = resolveStorageConfig(this.settings.s3);
     const binary = await this.app.vault.readBinary(candidate.file);
     const body = new Uint8Array(binary);
     const hash = await sha256Hex(body);
@@ -2433,6 +2491,7 @@ var S3ImageSyncPlugin = class extends import_obsidian7.Plugin {
       filename: safeFilename(candidate.file.name)
     });
     const contentType = contentTypeForExt(ext);
+    const publicUrl = buildPublicUrl(config.customDomainName, key);
     await putS3Object(
       config,
       key,
@@ -2441,13 +2500,12 @@ var S3ImageSyncPlugin = class extends import_obsidian7.Plugin {
       (status, text) => this.t("uploadFailed", { status, text }),
       hash
     );
-    const publicUrl = buildPublicUrl(config.customDomainName, key);
     this.cleanup.recordUpload(candidate.file.path, hash, key, publicUrl, config);
     await this.saveSettings();
     return { key, publicUrl };
   }
   buildReplacement(ref, candidate, publicUrl) {
-    const encodedBase = encodeURI(publicUrl);
+    const encodedBase = publicUrl;
     const url = ref.fragment ? `${encodedBase}#${encodeURIComponent(ref.fragment)}` : encodedBase;
     const label = ref.label || candidate.file.basename;
     if (candidate.replacement === "image") {
@@ -2558,7 +2616,7 @@ var S3ImageSyncPlugin = class extends import_obsidian7.Plugin {
     await this.saveSettings();
   }
   ensureS3Settings() {
-    const s3 = this.settings.s3;
+    const s3 = resolveStorageConfig(this.settings.s3);
     const missing = [];
     for (const key of [
       "endpoint",
@@ -2574,6 +2632,8 @@ var S3ImageSyncPlugin = class extends import_obsidian7.Plugin {
       missing.push("region");
     if (missing.length)
       throw new Error(this.t("missingS3", { settings: missing.join(", ") }));
+    storageRequestUrl(s3);
+    buildPublicUrl(s3.customDomainName, "validation.png");
   }
   addLog(entry) {
     this.settings.logs.unshift({

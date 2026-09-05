@@ -14,6 +14,7 @@ import {
 import { DEFAULT_SETTINGS, getReplacementForExt, mergeSettings, normalizeScanInterval } from "./settings";
 import { extractLocalRefs } from "./link-parser";
 import { putS3Object } from "./s3-client";
+import { resolveStorageConfig, storageRequestUrl } from "./storage-config";
 import { sha256Hex } from "./crypto";
 import {
   basename,
@@ -456,7 +457,7 @@ export default class S3ImageSyncPlugin extends Plugin {
 
   async uploadCandidate(candidate: Candidate): Promise<UploadResult> {
     // Freeze the destination across awaits, even if the settings view is edited.
-    const config = { ...this.settings.s3 };
+    const config = resolveStorageConfig(this.settings.s3);
     const binary = await this.app.vault.readBinary(candidate.file);
     const body = new Uint8Array(binary);
     const hash = await sha256Hex(body);
@@ -468,6 +469,7 @@ export default class S3ImageSyncPlugin extends Plugin {
       filename: safeFilename(candidate.file.name),
     });
     const contentType = contentTypeForExt(ext);
+    const publicUrl = buildPublicUrl(config.customDomainName, key);
     await putS3Object(
       config,
       key,
@@ -476,14 +478,13 @@ export default class S3ImageSyncPlugin extends Plugin {
       (status, text) => this.t("uploadFailed", { status, text }),
       hash
     );
-    const publicUrl = buildPublicUrl(config.customDomainName, key);
     this.cleanup.recordUpload(candidate.file.path, hash, key, publicUrl, config);
     await this.saveSettings();
     return { key, publicUrl };
   }
 
   buildReplacement(ref: LocalRef, candidate: Candidate, publicUrl: string): string {
-    const encodedBase = encodeURI(publicUrl);
+    const encodedBase = publicUrl; // buildPublicUrl already encodes the object key.
     const url = ref.fragment
       ? `${encodedBase}#${encodeURIComponent(ref.fragment)}`
       : encodedBase;
@@ -606,7 +607,7 @@ export default class S3ImageSyncPlugin extends Plugin {
   }
 
   ensureS3Settings(): void {
-    const s3 = this.settings.s3;
+    const s3 = resolveStorageConfig(this.settings.s3);
     const missing: string[] = [];
     for (const key of [
       "endpoint",
@@ -619,6 +620,8 @@ export default class S3ImageSyncPlugin extends Plugin {
     }
     if (s3.provider !== "r2" && !String(s3.region || "").trim()) missing.push("region");
     if (missing.length) throw new Error(this.t("missingS3", { settings: missing.join(", ") }));
+    storageRequestUrl(s3);
+    buildPublicUrl(s3.customDomainName, "validation.png");
   }
 
   addLog(entry: Omit<LogEntry, "time"> & { time?: string }): void {

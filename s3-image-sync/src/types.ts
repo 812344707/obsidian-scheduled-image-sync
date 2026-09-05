@@ -1,6 +1,6 @@
 import { TFile } from "obsidian";
 
-export type S3Provider = "r2" | "s3" | "minio" | "custom";
+export type S3Provider = "r2" | "s3" | "minio" | "custom" | "oss";
 export type DeletePolicy = "keep" | "confirm" | "immediate" | "delayed";
 export type ReplacementType = "image" | "markdown" | "audio" | "video";
 
@@ -37,6 +37,8 @@ export interface PluginSettings {
 
 /** Durable object identity; credentials remain only in the current S3 settings. */
 export interface ImageUploadRecord {
+  /** Missing in older records means path-style S3. */
+  addressingStyle?: "path" | "virtual";
   sourcePath: string;
   sourceHash: string;
   key: string;

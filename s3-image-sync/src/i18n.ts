@@ -107,6 +107,10 @@ export const I18N: Record<string, Record<string, string>> = {
     providerS3: "AWS S3",
     providerMinio: "MinIO",
     providerCustom: "Custom S3",
+    providerOSS: "Alibaba Cloud OSS",
+    ossRegionDesc: "Your bucket region, e.g. cn-hangzhou (oss-cn-hangzhou also accepted).",
+    ossEndpointAuto: "Generated from Region: https://s3.oss-<region>.aliyuncs.com. Bucket is added to the hostname automatically.",
+    ossGuide: "Direct OSS upload; PicGo is not required. The plugin uses the public S3-compatible endpoint and never changes bucket permissions. Public image URLs require anonymous read access. Use a dedicated RAM key; credentials are stored in this vault's plugin data.json.",
     endpoint: "Endpoint URL",
     endpointDesc: "e.g. https://abc123.r2.cloudflarestorage.com",
     bucketName: "Bucket name",
@@ -129,9 +133,9 @@ export const I18N: Record<string, Record<string, string>> = {
       "• \\{dd}: Current day (2 digits)\n" +
       "Default: attachments/\\{ext}/\\{hash2}/\\{hash}.\\{ext}",
     testConnection: "Test connection",
-    testConnectionDesc: "Click to verify your credentials are correct.",
+    testConnectionDesc: "Read-only bucket listing test. Upload, delete and public access require separate verification.",
     testing: "Testing...",
-    testConnectionSuccess: "Connection test passed!",
+    testConnectionSuccess: "Bucket listing test passed. Verify upload and display with a test image next.",
     testConnectionFailed: "Connection test failed: {error}",
 
     // Settings - General
@@ -296,6 +300,10 @@ export const I18N: Record<string, Record<string, string>> = {
     providerS3: "AWS S3",
     providerMinio: "MinIO",
     providerCustom: "自定义 S3",
+    providerOSS: "阿里云 OSS",
+    ossRegionDesc: "填写 Bucket 所在地域，例如 cn-hangzhou；也接受 oss-cn-hangzhou。",
+    ossEndpointAuto: "按地域自动生成 https://s3.oss-<地域>.aliyuncs.com，请求时自动将 Bucket 放到域名中。无需填写端点。",
+    ossGuide: "直接上传 OSS，无需 PicGo。使用外网 S3 兼容接口，不会修改 Bucket 权限。公开链接需要允许匿名读取；请使用专用 RAM 密钥，凭据保存在当前库的插件 data.json 中。",
     endpoint: "端点 URL",
     endpointDesc: "例如 https://abc123.r2.cloudflarestorage.com",
     bucketName: "存储桶名称",
@@ -318,9 +326,9 @@ export const I18N: Record<string, Record<string, string>> = {
       "• \\{dd}：2位当前日期 (如 17)\n" +
       "默认值：attachments/\\{ext}/\\{hash2}/\\{hash}.\\{ext}",
     testConnection: "测试连接",
-    testConnectionDesc: "点击验证凭据是否正确。",
+    testConnectionDesc: "只读检查存储桶列举权限（OSS 需 oss:ListObjects）；通过不代表上传、删除或公开读取已验证。",
     testing: "测试中...",
-    testConnectionSuccess: "连接测试通过！",
+    testConnectionSuccess: "存储桶连接与列举权限测试通过；请再用测试图片验证上传和显示。",
     testConnectionFailed: "连接测试失败：{error}",
 
     // Settings - General

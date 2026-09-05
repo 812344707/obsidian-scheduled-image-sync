@@ -1,3 +1,4 @@
+import { encodeObjectKey } from "./storage-config";
 export function basename(path: string): string {
   return String(path || "").split("/").pop() || path;
 }
@@ -37,7 +38,11 @@ export function buildPublicUrl(domain: string, key: string): string {
   if (cleanDomain && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(cleanDomain)) {
     cleanDomain = `https://${cleanDomain}`;
   }
-  return `${cleanDomain}/${key.split("/").map(encodeURIComponent).join("/")}`;
+  const base = new URL(cleanDomain);
+  if (!["http:", "https:"].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
+    throw new Error("公开访问 URL 需为无签名的 HTTP(S) 地址 / Public URL must be an unsigned HTTP(S) base URL");
+  }
+  return `${base.href.replace(/\/+$/, "")}/${encodeObjectKey(key)}`;
 }
 
 export function replaceAllLiteral(text: string, search: string, replacement: string): string {

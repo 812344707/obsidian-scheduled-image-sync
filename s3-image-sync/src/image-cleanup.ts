@@ -4,11 +4,12 @@ import { ImageUploadRecord, S3Config } from "./types";
 import { deleteS3Object } from "./s3-client";
 import { sha256Hex } from "./crypto";
 import { extractLocalRefs } from "./link-parser";
+import { resolveStorageConfig, storageAddressing } from "./storage-config";
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "bmp", "tif", "tiff", "avif", "ico"]);
 const NOTE_EXTENSIONS = new Set(["md", "canvas", "base", "html", "htm"]);
 const endpoint = (value: string) => value.replace(/\/+$/, "");
-const identity = (r: ImageUploadRecord) => JSON.stringify([endpoint(r.endpoint), r.bucketName, r.key]);
+const identity = (r: ImageUploadRecord) => JSON.stringify([r.addressingStyle || "path", endpoint(r.endpoint), r.bucketName, r.key]);
 const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
 
 // Conservative search supplements link parsing: YAML, HTML, Canvas, reference
@@ -65,7 +66,9 @@ export class ImageCleanup {
   invalidate(): void { this.revision++; }
 
   recordUpload(sourcePath: string, sourceHash: string, key: string, publicUrl: string, config: S3Config): void {
+    config = resolveStorageConfig(config);
     const record: ImageUploadRecord = {
+      addressingStyle: storageAddressing(config),
       sourcePath, sourceHash, key, publicUrl, endpoint: endpoint(config.endpoint),
       region: config.region || "auto", bucketName: config.bucketName, uploadedAt: new Date().toISOString(),
     };
@@ -111,9 +114,12 @@ export class ImageCleanup {
   }
 
   private sameStorage(record: ImageUploadRecord): boolean {
-    const config = this.plugin.settings.s3;
-    return endpoint(config.endpoint) === endpoint(record.endpoint)
-      && config.bucketName === record.bucketName && (config.region || "auto") === record.region;
+    try {
+      const config = resolveStorageConfig(this.plugin.settings.s3);
+      return storageAddressing(config) === (record.addressingStyle || "path")
+        && endpoint(config.endpoint) === endpoint(record.endpoint)
+        && config.bucketName === record.bucketName && (config.region || "auto") === record.region;
+    } catch { return false; }
   }
 
   async scan(hashPaths?: ReadonlySet<string>): Promise<CleanupScan> {

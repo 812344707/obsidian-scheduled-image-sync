@@ -2,6 +2,7 @@ import { requestUrl } from "obsidian";
 import { S3Config } from "./types";
 import { sha256Hex, hmacHex, getSignatureKey } from "./crypto";
 import { toAmzDate } from "./utils";
+import { resolveStorageConfig, storageRequestUrl } from "./storage-config";
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
@@ -22,10 +23,8 @@ export async function putS3Object(
   formatError: (status: number, text: string) => string,
   precomputedHash?: string
 ): Promise<void> {
-  const endpoint = String(config.endpoint || "").replace(/\/+$/, "");
-  const bucket = config.bucketName;
-  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-  const url = `${endpoint}/${bucket}/${encodedKey}`;
+  config = resolveStorageConfig(config);
+  const url = storageRequestUrl(config, key);
   const parsed = new URL(url);
   const region = config.region || "auto";
 
@@ -76,43 +75,30 @@ export async function putS3Object(
       Authorization: `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
     };
 
+    let response;
     try {
-      const response = await requestUrl({
-        url,
-        method: "PUT",
-        headers,
+      response = await requestUrl({
+        url, method: "PUT", headers,
         body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
         throw: false,
       });
-
-      if (response.status >= 200 && response.status < 300) return;
-
-      if (shouldRetry(response.status) && attempt < MAX_RETRIES) {
-        await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
-        continue;
-      }
-
-      throw new Error(formatError(response.status, response.text || ""));
     } catch (error: unknown) {
-      if (error instanceof Error && error.message) {
-        // Already a formatted error from above — don't retry non-retriable errors
-        if (attempt >= MAX_RETRIES) throw error;
-      }
-      // Network / transport errors are retriable
-      if (attempt < MAX_RETRIES) {
-        await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
-        continue;
-      }
-      throw error;
+      if (attempt >= MAX_RETRIES) throw error;
+      await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
+      continue;
     }
+    if (response.status >= 200 && response.status < 300) return;
+    if (shouldRetry(response.status) && attempt < MAX_RETRIES) {
+      await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
+      continue;
+    }
+    throw new Error(formatError(response.status, response.text || ""));
   }
 }
 
 export async function deleteS3Object(config: S3Config, key: string): Promise<void> {
-  const endpoint = String(config.endpoint || "").replace(/\/+$/, "");
-  const bucket = config.bucketName;
-  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-  const url = `${endpoint}/${bucket}/${encodedKey}`;
+  config = resolveStorageConfig(config);
+  const url = storageRequestUrl(config, key);
   const parsed = new URL(url);
   const region = config.region || "auto";
 
@@ -162,9 +148,8 @@ export async function deleteS3Object(config: S3Config, key: string): Promise<voi
 }
 
 export async function testS3Connection(config: S3Config): Promise<void> {
-  const endpoint = String(config.endpoint || "").replace(/\/+$/, "");
-  const bucket = config.bucketName;
-  const url = `${endpoint}/${bucket}/`;
+  config = resolveStorageConfig(config);
+  const url = storageRequestUrl(config);
   const parsed = new URL(url);
   const region = config.region || "auto";
 
@@ -209,6 +194,6 @@ export async function testS3Connection(config: S3Config): Promise<void> {
   };
 
   const response = await requestUrl({ url, method: "GET", headers, throw: false });
-  if (response.status >= 200 && response.status < 400) return;
+  if (response.status >= 200 && response.status < 300) return;
   throw new Error(`S3 connection test failed (${response.status}): ${response.text || "Unknown error"}`);
 }

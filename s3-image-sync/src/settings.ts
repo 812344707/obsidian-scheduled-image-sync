@@ -144,7 +144,7 @@ export function mergeSettings(defaults: PluginSettings, loaded: unknown): Plugin
     ...defaults.s3,
     ...s3Data,
     provider: s3Data.provider || (data.r2 ? "r2" : "r2"),
-    region: s3Data.region || (s3Data.provider === "r2" || data.r2 ? "auto" : "us-east-1"),
+    region: s3Data.region || (s3Data.provider === "oss" ? "cn-hangzhou" : s3Data.provider === "r2" || data.r2 ? "auto" : "us-east-1"),
   };
 
   return {

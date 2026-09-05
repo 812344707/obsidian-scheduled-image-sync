@@ -1,7 +1,7 @@
 {
   "name": "s3-image-sync-local",
-  "version": "1.0.10-local.3",
-  "description": "Scan local note images, upload to S3-compatible storage (R2/AWS S3/MinIO), and replace links safely.",
+  "version": "1.0.10-local.4",
+  "description": "Scheduled direct upload to Alibaba Cloud OSS and S3-compatible storage, in-place links and unused-image cleanup.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -13,6 +13,9 @@
   "author": "JongChoiYip",
   "license": "MIT",
   "devDependencies": {
+    "@smithy/hash-node": "^4.5.2",
+    "@smithy/protocol-http": "^5.6.2",
+    "@smithy/signature-v4": "^5.7.3",
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^8.61.1",
     "@typescript-eslint/parser": "^8.61.1",
