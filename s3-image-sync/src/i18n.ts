@@ -145,7 +145,7 @@ export const I18N: Record<string, Record<string, string>> = {
     mobileHint:
       "Note: Scheduled auto-scan and delayed delete are disabled on mobile devices. Manual upload and replacement work normally.",
     attachmentRoot: "Image folder",
-    attachmentRootDesc: "Only files under this folder will be processed. Default: 99 Attachments",
+    attachmentRootDesc: "Type a folder name or path to select a matching vault folder. Only images under this folder are processed.",
     deletePolicy: "After replacing links, delete local files?",
     deletePolicyDesc: "Applies to manual uploads. Scheduled scans always keep local images.",
     deleteKeep: "Keep local images (recommended)",
@@ -338,7 +338,7 @@ export const I18N: Record<string, Record<string, string>> = {
     mobileHint:
       "提示：移动端不支持定时自动扫描和延迟删除。手动上传和替换功能正常使用。",
     attachmentRoot: "图片文件夹",
-    attachmentRootDesc: "只处理此文件夹下的图片。默认：90-笔记系统/92-附件",
+    attachmentRootDesc: "输入文件夹名称或路径，下拉选择当前库中的文件夹；只处理所选文件夹及其子文件夹中的图片。",
     deletePolicy: "替换链接后，是否删除本地文件？",
     deletePolicyDesc: "仅影响手动上传。定时扫描始终保留本地原图。",
     deleteKeep: "保留本地原图（推荐）",

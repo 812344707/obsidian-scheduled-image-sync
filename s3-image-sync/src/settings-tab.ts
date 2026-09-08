@@ -6,6 +6,7 @@ import { debounce } from "./utils";
 import { testS3Connection } from "./s3-client";
 import { normalizeScanInterval } from "./settings";
 import { resolveStorageConfig } from "./storage-config";
+import { FolderSuggest } from "./folder-suggest";
 
 const CATEGORY_ICONS: Record<string, string> = {
   image: "\ud83d\udcf7",
@@ -16,6 +17,7 @@ const CATEGORY_ICONS: Record<string, string> = {
 
 export class S3ImageSyncSettingTab extends PluginSettingTab {
   plugin: S3ImageSyncPlugin;
+  private folderSuggest?: FolderSuggest;
 
   constructor(app: App, plugin: S3ImageSyncPlugin) {
     super(app, plugin);
@@ -26,8 +28,13 @@ export class S3ImageSyncSettingTab extends PluginSettingTab {
     this.renderSettings();
   }
 
+  hide(): void {
+    this.folderSuggest?.close();
+  }
+
   private renderSettings(): void {
     const { containerEl } = this;
+    this.folderSuggest?.close();
     containerEl.empty();
     const t = (k: string, p?: Record<string, unknown>) => this.plugin.t(k, p);
 
@@ -205,12 +212,14 @@ export class S3ImageSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName(t("attachmentRoot"))
       .setDesc(t("attachmentRootDesc"))
-      .addText((text) =>
-        text.setValue(this.plugin.settings.attachmentRoot).onChange((value) => {
+      .addText((text) => {
+        const updateFolder = (value: string) => {
           this.plugin.settings.attachmentRoot = value.trim() || "90-笔记系统/92-附件";
           void save();
-        })
-      );
+        };
+        text.setValue(this.plugin.settings.attachmentRoot).onChange(updateFolder);
+        this.folderSuggest = new FolderSuggest(this.app, text.inputEl, updateFolder);
+      });
 
     new Setting(containerEl)
       .setName(t("deletePolicy"))

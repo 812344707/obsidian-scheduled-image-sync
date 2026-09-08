@@ -2,7 +2,7 @@
 
 Obsidian 图片管理插件：定时上传本地图片到自选的 S3 兼容图床，原位替换链接，并检索、勾选清理未引用图片。
 
-基于 [S3 Image Sync 1.0.10](https://github.com/JongChoiYip/s3-image-sync) 的 MIT 修改版。当前版本：**1.0.10-local.4**；插件 ID：`s3-image-sync-local`。
+基于 [S3 Image Sync 1.0.10](https://github.com/JongChoiYip/s3-image-sync) 的 MIT 修改版。当前版本：**1.0.10-local.5**；插件 ID：`s3-image-sync-local`。
 
 ## 功能
 
@@ -14,7 +14,7 @@ Obsidian 图片管理插件：定时上传本地图片到自选的 S3 兼容图�
 
 ## 下载与安装
 
-从 [1.0.10-local.4 版本页面](https://github.com/812344707/obsidian-scheduled-image-sync/releases/tag/1.0.10-local.4) 下载 ZIP 安装包，解压后将 `s3-image-sync-local` 文件夹放到库的 `.obsidian/plugins/` 中，在第三方插件设置中启用。
+从 [1.0.10-local.5 版本页面](https://github.com/812344707/obsidian-scheduled-image-sync/releases/tag/1.0.10-local.5) 下载 ZIP 安装包，解压后将 `s3-image-sync-local` 文件夹放到库的 `.obsidian/plugins/` 中，在第三方插件设置中启用。
 
 升级时先停用插件，只覆盖 `main.js`、`manifest.json`、`styles.css`，**保留原有 `data.json`**，避免丢失图床配置和上传记录。
 
@@ -44,3 +44,7 @@ npm test
 ## 来源与许可证
 
 保留 [上游原说明](s3-image-sync/UPSTREAM-README.md) 和 [MIT 许可证](LICENSE)。本项目为独立修改版，并非上游官方发布。
+
+## 文件夹路径自动补全（1.0.10-local.5）
+
+在「图片文件夹」输入名称或路径，下拉列出当前库中匹配的文件夹；候选显示完整路径。支持鼠标点击，或方向键选择后回车确认，自动保存选中路径。仍可手动填写路径。

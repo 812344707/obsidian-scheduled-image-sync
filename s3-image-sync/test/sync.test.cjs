@@ -73,7 +73,7 @@ async function harness(overrides = {}, requestHandler) {
     hide() {}
   }
   const obsidian = {
-    Plugin, TFile, Notice, MarkdownView: class {}, Modal: class {}, PluginSettingTab: class {}, Setting: class {},
+    Plugin, TFile, Notice, AbstractInputSuggest: class {}, MarkdownView: class {}, Modal: class {}, PluginSettingTab: class {}, Setting: class {},
     Platform: { isMobile: false }, getLanguage: () => 'zh',
     requestUrl: async params => {
       const host = new URL(params.url).hostname;

@@ -1,7 +1,7 @@
 {
   "id": "s3-image-sync-local",
   "name": "图床定时同步",
-  "version": "1.0.10-local.4",
+  "version": "1.0.10-local.5",
   "minAppVersion": "1.6.6",
   "description": "按自定间隔直接上传本地图片到阿里云 OSS 或 S3 兼容图床并替换链接，检索未引用图片并勾选清理本地或图床。",
   "author": "JongChoiYip (upstream); local adaptations",
